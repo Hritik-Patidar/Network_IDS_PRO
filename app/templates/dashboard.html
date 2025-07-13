@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Network IDS Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #2c3e50;
+      color: white;
+      padding: 12px 20px;
+    }
+
+    header h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 22px;
+      margin: 0;
+    }
+
+    .dashboard-container {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .section {
+      background: white;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    ul {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    li {
+      background: #eef2f5;
+      margin: 5px 0;
+      padding: 8px;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+
+    .logout-btn {
+      background: #e74c3c;
+      border: none;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    button {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.3s ease;
+      background-color: #3498db;
+      color: white;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    .danger-btn {
+      background-color: #e74c3c !important;
+    }
+
+    .danger-btn:hover {
+      background-color: #c0392b !important;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h2>
+      <img src="{{ url_for('static', filename='nids-icon.png') }}" alt="NIDS" style="height: 70px;">
+       <span style="font-size: 18px; color: #ccc;">NetworkShield Sentry(Network Intrusion Detection System)</span>
+    </h2>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div title="Admin User"
+     style="width: 35px; height: 35px; border-radius: 50%; background-color: #2980b9; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold;">
+  {{ current_user.username[0]|upper }}
+</div>
+
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+  </header>
+
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div id="flashPopup" style="display: flex; position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 9999;
+      justify-content: center; align-items: center;">
+      <div style="background: white; padding: 20px; border-radius: 10px; max-width: 400px; text-align: center;">
+        <h3 style="margin-top: 0;">🔔 Message</h3>
+        <ul style="list-style: none; padding: 0;">
+          {% for message in messages %}
+            <li style="margin: 10px 0; color: #e74c3c; font-weight: bold;">{{ message }}</li>
+          {% endfor %}
+        </ul>
+        <button onclick="closeFlashPopup()" style="margin-top: 15px; padding: 6px 16px; background-color: #2c3e50; color: white; border: none; border-radius: 5px; cursor: pointer;">
+          OK
+        </button>
+      </div>
+    </div>
+    <script>
+      function closeFlashPopup() {
+        document.getElementById("flashPopup").style.display = "none";
+      }
+    </script>
+  {% endif %}
+{% endwith %}
+
+
+  <div class="dashboard-container">
+
+    <!-- LEFT: Interface Controls -->
+    <div class="section">
+      <h3>1. Interface Controls</h3>
+      <form method="POST" action="/start-capture" onsubmit="return validateForm();">
+        <div class="interface-checkboxes">
+          <label>Select Interfaces:</label><br>
+          {% for iface in interfaces %}
+            <label>
+              <input type="checkbox" name="interfaces" value="{{ iface.name }}">
+              {{ iface.label }}
+            </label><br>
+          {% endfor %}
+        </div>
+        <button type="submit">Start Capturing</button>
+      </form>
+
+      <form method="POST" action="/stop-capture" style="margin-top: 10px;">
+        <button type="submit" class="danger-btn">Stop Capturing</button>
+      </form>
+
+      <script>
+        function validateForm() {
+          const checkboxes = document.querySelectorAll('input[name="interfaces"]:checked');
+          if (checkboxes.length === 0) {
+            alert('Please select at least one interface.');
+            return false;
+          }
+          return true;
+        }
+      </script>
+
+      <hr>
+
+      <h3>3. Add Malicious IP</h3>
+      <form method="POST" action="/add-ip">
+        <div class="form-group">
+          <input name="ip" placeholder="IP Address" required>
+        </div>
+        <div class="form-group">
+          <input name="desc" placeholder="Description" required>
+        </div>
+        <button>Add</button>
+      </form>
+
+      <ul>
+        {% for ip in malicious_ips %}
+          <li>
+            {{ ip.ip_address }} — {{ ip.description }}
+            <form method="POST" action="/delete-ip/{{ ip.id }}" style="display:inline;">
+              <button type="submit" style="background:none; border:none; color:red; cursor:pointer;" title="Delete">🗑️</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- RIGHT: Alerts + Logs -->
+    <div>
+      <div class="section" style="max-height: 300px; overflow-y: auto;">
+        <h3>2. Live Alerts</h3>
+        <ul id="alert-list" style="max-height: 150px; overflow-y: auto;"></ul>
+        <button onclick="deleteAllAlerts()" class="danger-btn" style="margin-top: 10px;">🗑️ Delete All Alerts</button>
+        <button onclick="openAlertModal()">🔍 View All Alerts</button>
+      </div>
+<style>
+  #alert-list li {
+    color: red;
+    font-weight: bold;
+  }
+</style>
+      <!-- Alert Modal -->
+      <div id="alertModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+        <div style="background: white; width: 80%; max-height: 80%; overflow-y: auto; padding: 20px;
+          border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+          <h3>📋 All Alerts</h3>
+          <ul id="modal-alert-list" style="list-style-type: none; padding-left: 0;"></ul>
+          <button onclick="closeAlertModal()" class="danger-btn" style="margin-top: 10px;">❌ Close</button>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top: 15px; max-height: 300px; overflow-y: auto;">
+        <h3 style="position: sticky; top: 0; background: white; padding-bottom: 5px; z-index: 1;">Live Packet Logs</h3>
+        <ul id="packet-list" style="max-height: 250px; overflow-y: auto;"></ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function loadAlerts() {
+      fetch('/get-alerts')
+        .then(response => response.json())
+        .then(data => {
+          const alertContainer = document.getElementById("alert-list");
+          alertContainer.innerHTML = '';
+          data.forEach(alert => {
+            const item = document.createElement("li");
+            item.textContent = `[${alert.timestamp}] ${alert.message}`;
+            alertContainer.appendChild(item);
+          });
+        });
+    }
+
+    function deleteAllAlerts() {
+      if (!confirm("Are you sure you want to delete all alerts?")) return;
+      fetch('/delete-all-alerts', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          alert(data.message);
+          document.getElementById("modal-alert-list").innerHTML = "";
+        })
+        .catch(error => {
+          alert("Error deleting alerts.");
+          console.error(error);
+        });
+    }
+
+    function openAlertModal() {
+      document.getElementById("alertModal").style.display = "flex";
+      fetch('/get-all-alerts')
+        .then(response => response.json())
+        .then(data => {
+          const alertContainer = document.getElementById("modal-alert-list");
+          alertContainer.innerHTML = '';
+          data.forEach(alert => {
+            const item = document.createElement("li");
+            item.textContent = `[${alert.timestamp}] ${alert.message}`;
+            alertContainer.appendChild(item);
+          });
+        });
+    }
+
+    function closeAlertModal() {
+      document.getElementById("alertModal").style.display = "none";
+    }
+
+    // Load live alerts every 2 seconds
+    setInterval(loadAlerts, 2000);
+    window.onload = loadAlerts;
+
+    // Live Packet Stream
+    const packetList = document.getElementById("packet-list");
+    const eventSource = new EventSource("/stream-packets");
+    eventSource.onmessage = function(event) {
+      const li = document.createElement("li");
+      li.textContent = event.data;
+      packetList.prepend(li);
+      if (packetList.children.length > 20) {
+        packetList.removeChild(packetList.lastChild);
+      }
+    };
+  </script>
+
+</body>
+</html>

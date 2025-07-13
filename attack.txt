@@ -1,0 +1,19 @@
+DNS Tunneling /X
+ARP Spoofing Detection  /X
+Port Scanning Detection (TCP/UDP) /X
+UDP Flood Detection  /X
+SYN Scan Detection – TCP SYN  /X
+Large ICMP/ICMPv6 Packets – Ping of Death
+Malicious IPs Monitoring
+Unusual Large Packet Detection
+Packet Rate Monitoring (DoS Detection  /X
+TCP Reset Floods
+IP Fragmentation Attack Detection
+Smurf Attack Detection (ICMP echo replay)
+Teardrop Attack ( not required)
+DHCP Starvation
+SSL Stripping
+Land Attack
+MAC Flooding
+bruteforce attack
+TCP port scan
