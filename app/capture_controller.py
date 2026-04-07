@@ -2,22 +2,13 @@
 from threading import Thread, Event
 from scapy.all import sniff
 import psutil
-from scapy.all import get_if_list
+
+import app.stats_monitor
 
 capture_thread = None
 stop_event = Event()
-
-# def get_malicious_ips():
-#     from flask import current_app
-#     from app.models import MaliciousIP
-#     with current_app.app_context():
-#         print({ip.ip_address: ip.description for ip in MaliciousIP.query.all()})# ✅ This ensures correct context
-#         return {ip.ip_address: ip.description for ip in MaliciousIP.query.all()}
-
-
-
 def start_capture(user_selected_labels):
-    from app.pack_cap import process_packet
+    from app.detection_engine import process_packet
     # Step 1: Map user-friendly labels to actual interface names
     def convert_labels_to_interfaces(labels):
         system_interfaces = psutil.net_if_addrs()
@@ -45,8 +36,9 @@ def start_capture(user_selected_labels):
 
 def stop_capture():
     stop_event.set()
-
-
+    # st = app.stats_monitor.stats.get_stats()
+    app.stats_monitor.stats.save()
+    # print(st)
 
 def save_alert_to_db(message):
     from app import db, create_app

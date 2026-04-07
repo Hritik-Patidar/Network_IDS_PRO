@@ -6,7 +6,7 @@ import datetime
 import psutil
 import time
 from flask import Response
-from app.pack_cap import live_packet_queue  # Queue containing live packet summaries
+from app.detection_engine import live_packet_queue  # Queue containing live packet summaries
 
 from app.capture_controller import start_capture, stop_capture
 from app import db

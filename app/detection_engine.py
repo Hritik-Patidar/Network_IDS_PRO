@@ -1,13 +1,19 @@
+from tabnanny import check
+
 from scapy.all import sniff, IP, TCP, UDP, ICMPv6EchoRequest, get_if_list, IPv6
 from scapy.layers.inet import ICMP
 from colorama import Fore, Style
 from scapy.layers.l2 import Ether
-
+from app.stats_monitor import stats
 from app import db
+
+from app.deduplicator import AlertDeduplicator
+check_duplicate=AlertDeduplicator(30) #time in second for duplicate alert expire
 from app.capture_controller import save_alert_to_db
 from scapy.layers.l2 import ARP
 from app.get_m_ip import *
 interfaces = get_if_list()
+
 # malicious_ips={"192.160.2.2":"hritik patidar",}
 print("Available network interfaces:", interfaces)
 from scapy.layers.dns import DNSQR
@@ -59,7 +65,7 @@ ICMP_ALERT_WINDOW = config.get("ICMP_ALERT_WINDOW", 7)               # seconds
 icmp_alert_times = deque(maxlen=100)
 
 # SYN Scan Detection
-SYN_THRESHOLD = config.get("SYN_THRESHOLD", 30)                              # SYN count per window
+SYN_THRESHOLD = config.get("SYN_THRESHOLD", 20)                              # SYN count per window
 TIME_WINDOW = config.get("TIME_WINDOW", 6)                           # seconds
 syn_count = Counter()
 start_time = time.time()
@@ -92,41 +98,6 @@ def process_packet(packet):
     # print(malicious_ips)
     try:
 
-        # if print_packet:
-        #     current_time = time.time()
-        #     if current_time - last_sent_time >= 1:
-        #         last_sent_time = current_time
-        #         packet_count = 0
-        #
-        #     if packet_count < MAX_PACKETS_PER_SECOND:
-        #         src_ip = dst_ip = proto = "Unknown"
-        #         pkt_size = len(packet)
-        #
-        #         if packet.haslayer(IP):
-        #             src_ip = packet[IP].src
-        #             dst_ip = packet[IP].dst
-        #             proto = packet[IP].proto
-        #         elif packet.haslayer(IPv6):
-        #             src_ip = packet[IPv6].src
-        #             dst_ip = packet[IPv6].dst
-        #             proto = "IPv6"
-        #
-        #         if packet.haslayer(TCP):
-        #             proto = "TCP"
-        #         elif packet.haslayer(UDP):
-        #             proto = "UDP"
-        #         elif packet.haslayer(ICMP):
-        #             proto = "ICMP"
-        #
-        #         summary = f"{src_ip} → {dst_ip} | Protocol: {proto} | Size: {pkt_size} bytes"
-        #         print(summary)
-        #
-        #         live_packet_queue.put(summary)
-        #         packet_count += 1
-        #     else:
-        #         # Exceeded rate limit, skip pushing to queue
-        #         pass
-        # SYN Scan Detection
         if print_packet:
             try:
                 current_time = time.time()
@@ -142,30 +113,37 @@ def process_packet(packet):
                     proto = " > ".join(layer_names)
 
                     summary = f"{packet.summary()} | Layers: {proto} | Size: {pkt_size} bytes"
-                    print(summary)
-
-                    live_packet_queue.put(summary)
+                    #print(summary)
+                    if packet.haslayer(IP):
+                        live_packet_queue.put(summary)
                     packet_count += 1
 
             except Exception as e:
                 print(f"[WARNING] Packet skipped: {e}")
 
+        # SYN Scan Detection
         if packet.haslayer(TCP) and packet[TCP].flags == 2:  # SYN
             src_ip = packet[IP].src
             syn_count[src_ip] += 1
+            stats.log_packet("TCP")
 
             if time.time() - start_time > TIME_WINDOW:
                 for ip, count in syn_count.items():
                     if count > SYN_THRESHOLD:
                         msg = f"[ALERT] Possible SYN scan from {ip} ({count} SYNs in {TIME_WINDOW}s)"
+                        if check_duplicate.process(f"SYN Scan attack from {ip}"):
+                            stats.log_alert("SYN Scan")
+                            save_alert_to_db(msg)
                         print(Fore.RED + msg + Style.RESET_ALL)
-                        save_alert_to_db(msg)
+
                 syn_count.clear()
                 start_time = time.time()
 
         #large icmp packet alert
         if packet.haslayer(ICMP) and packet.haslayer(IP):
             pkt_size = len(packet)
+            stats.log_packet("TCP")
+
             if pkt_size > ICMP_LARGE_THRESHOLD:
                 current_time = time.time()
                 icmp_alert_times.append(current_time)
@@ -178,18 +156,24 @@ def process_packet(packet):
                     src_ip = packet[IP].src
                     dst_ip = packet[IP].dst
                     msg = f"[ALERT] ICMP Flood? More than {ICMP_ALERT_LIMIT} large ICMP packets in {ICMP_ALERT_WINDOW}s. Latest from {src_ip} to {dst_ip} ({pkt_size} bytes)"
+                    if check_duplicate.process(f"Large ICMP Packet attack from {src_ip}"):
+                        stats.log_alert("Large ICMP Packet")
+                        save_alert_to_db(msg)
+
                     print(Fore.RED + msg + Style.RESET_ALL)
-                    save_alert_to_db(msg)
+
                     icmp_alert_times.clear()
-                    # Large ICMPv6 Packet
+         # Large ICMPv6 Packet
         if packet.haslayer(ICMPv6EchoRequest) and packet.haslayer(IPv6):
             src_ip = packet[IPv6].src
             dst_ip = packet[IPv6].dst
             pkt_size = len(packet)
             if pkt_size > ICMP_LARGE_THRESHOLD:
                 msg = f"[ALERT] Large ICMPv6 packet from {src_ip} to {dst_ip} ({pkt_size} bytes)"
+                if check_duplicate.process(f"Large ICMPv6 Packet attack from {src_ip}"):
+                    stats.log_alert("Large ICMPv6 Packet")
+                    save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
 
         # General Packet Info and Large Packet Anomaly
         if IP in packet:
@@ -198,17 +182,14 @@ def process_packet(packet):
             proto = packet[IP].proto
             pkt_size = len(packet)
 
+            stats.log_packet("IP")
+
             packet_data.append({
                 "Source IP": src_ip,
                 "Destination IP": dst_ip,
                 "Protocol": proto,
                 "Packet Size": pkt_size
             })
-
-            # if pkt_size > 1500:
-            #     msg = f"[ALERT] Large packet from {src_ip} to {dst_ip} ({pkt_size} bytes)"
-            #     print(Fore.RED + msg + Style.RESET_ALL)
-            #     save_alert_to_db(msg)
 
         # Malicious IP Detection
         if packet.haslayer(IP):
@@ -217,19 +198,23 @@ def process_packet(packet):
             malicious_ips=save_malicious_ips_to_file()
             if src_ip in malicious_ips:
                 msg = f"[ALERT] Malicious source IP: {src_ip} ({malicious_ips[src_ip]})"
+                if check_duplicate.process(f"Malicious source IP: {src_ip} ({malicious_ips[src_ip]}"):
+                    stats.log_alert("Malicious IP")
+                    save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
 
             if dst_ip in malicious_ips:
                 msg = f"[ALERT] Malicious destination IP: {dst_ip} ({malicious_ips[dst_ip]})"
+                if check_duplicate.process(f"Malicious destination IP: {dst_ip} ({malicious_ips[src_ip]}"):
+                    stats.log_alert("Malicious IP")
+                    save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
-
 
         # DNS Tunneling Detection
         if packet.haslayer(DNSQR) and packet.haslayer(UDP) and packet[UDP].dport == 53:
             domain = packet[DNSQR].qname.decode(errors='ignore').strip('.')
             labels = domain.split('.')
+            stats.log_packet("DNS")
 
             # Rule 1: Check for long subdomains (base64-like strings)
             long_label = any(len(label) > 50 for label in labels)
@@ -249,8 +234,11 @@ def process_packet(packet):
             # Rule 3: Query rate too high in short time
             if dns_query_counts[domain] > QUERY_RATE_THRESHOLD or long_label:
                 msg = f"[ALERT] Possible DNS tunneling detected: {domain} | Count: {dns_query_counts[domain]}"
+
+                if check_duplicate.process(f"Possible DNS tunneling detected: {domain}"):
+                    stats.log_alert("DNS tunneling")
+                    save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
 
 
 
@@ -260,12 +248,15 @@ def process_packet(packet):
             src_ip = packet[ARP].psrc
             src_mac = packet[ARP].hwsrc
 
+            stats.log_packet("ARP")
             if src_ip in arp_table:
                 # MAC mismatch? Possible spoofing
                 if arp_table[src_ip] != src_mac:
                     msg = f"[ALERT] ARP spoofing detected! IP {src_ip} is now claiming MAC {src_mac} (was {arp_table[src_ip]})"
+                    if check_duplicate.process(f"ARP spoofing detected! IP {src_ip}"):
+                        save_alert_to_db(msg)
+                        stats.log_alert("ARP spoofing")
                     print(Fore.RED + msg + Style.RESET_ALL)
-                    save_alert_to_db(msg)
             else:
                 arp_table[src_ip] = src_mac
 
@@ -273,6 +264,8 @@ def process_packet(packet):
         if packet.haslayer(UDP) and packet.haslayer(IP):
             src_ip = packet[IP].src
             now = time.time()
+
+            stats.log_packet("UDP")
 
             udp_packet_log[src_ip].append(now)
 
@@ -283,8 +276,10 @@ def process_packet(packet):
             # Check if flood threshold exceeded
             if len(udp_packet_log[src_ip]) > UDP_THRESHOLD:
                 msg = f"[ALERT] UDP Flood detected from {src_ip}: {len(udp_packet_log[src_ip])} packets in {UDP_TIME_WINDOW} seconds"
+                if check_duplicate.process(f"UDP Flood detected from {src_ip}"):
+                    save_alert_to_db(msg)
+                    stats.log_alert("UDP Flood")
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
                 udp_packet_log[src_ip].clear()
 
         # Packet Rate Monitoring (DoS Detection)
@@ -302,9 +297,11 @@ def process_packet(packet):
             # Check if rate exceeds threshold
             if len(packet_rate_map[src_ip]) > PACKET_RATE_THRESHOLD_DOS:
                 msg = f"[ALERT] DoS Suspected: High packet rate from {src_ip} - {len(packet_rate_map[src_ip])} packets in {RATE_TIME_WINDOW_DOS}s"
+                if check_duplicate.process(f"DoS Suspected from {src_ip}"):
+                    save_alert_to_db(msg)
+                    stats.log_alert("DoS")
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
-                packet_rate_map[src_ip].clear()  # Optional: to avoid repeated alerts
+                packet_rate_map[src_ip].clear()  #  avoid repeated alerts
 
         # TCP Reset Flood Detection
         if packet.haslayer(IP) and packet.haslayer(TCP):
@@ -322,8 +319,10 @@ def process_packet(packet):
                 # Check if count exceeds threshold
                 if len(rst_packet_count[src_ip]) > RST_FLOOD_THRESHOLD:
                     msg = f"[ALERT] TCP RST Flood suspected from {src_ip} - {len(rst_packet_count[src_ip])} RSTs in {RST_WINDOW_SECONDS}s"
+                    if check_duplicate.process(f"TCP RST Flood suspected from {src_ip}"):
+                        save_alert_to_db(msg)
+                        stats.log_alert("TCP RST Flood")
                     print(Fore.RED + msg + Style.RESET_ALL)
-                    save_alert_to_db(msg)
                     rst_packet_count[src_ip].clear()  # Avoid repeating the alert constantly
 
         # IP Fragmentation Attack Detection
@@ -341,8 +340,10 @@ def process_packet(packet):
 
                 if len(fragment_count[src_ip]) > FRAG_THRESHOLD:
                     msg = f"[ALERT] Possible IP Fragmentation attack from {src_ip} - {len(fragment_count[src_ip])} fragments in {FRAG_WINDOW}s"
+                    if check_duplicate.process(f"IP Fragmentation attack from {src_ip}"):
+                        save_alert_to_db(msg)
+                        stats.log_alert("IP Fragmentation")
                     print(Fore.RED + msg + Style.RESET_ALL)
-                    save_alert_to_db(msg)
                     fragment_count[src_ip].clear()
 
         # Smurf Attack Detection
@@ -350,6 +351,7 @@ def process_packet(packet):
             ip_layer = packet[IP]
             icmp_layer = packet[ICMP]
 
+            stats.log_packet("ICMP")
             # ICMP Echo Request (ping)
             if icmp_layer.type == 8:
                 dst_ip = ip_layer.dst
@@ -367,8 +369,10 @@ def process_packet(packet):
                     # Count how many pings went to broadcast recently
                     if len(icmp_broadcast_tracker) > ICMP_SMURF_THRESHOLD:
                         msg = f"[ALERT] Possible Smurf Attack: {len(icmp_broadcast_tracker)} ICMP Echo Requests to broadcast addresses in {ICMP_SMURF_WINDOW}s. Latest from {src_ip}"
+                        if check_duplicate.process(f"Smurf Attack from {src_ip}"):
+                            save_alert_to_db(msg)
+                            stats.log_alert("Smurf Attack")
                         print(Fore.RED + msg + Style.RESET_ALL)
-                        save_alert_to_db(msg)
                         icmp_broadcast_tracker.clear()
 
         # Land Attack Detection
@@ -378,8 +382,10 @@ def process_packet(packet):
 
             if ip_layer.src == ip_layer.dst and tcp_layer.sport == tcp_layer.dport:
                 msg = f"[ALERT] Land Attack detected: Source and Destination IP/Port are the same ({ip_layer.src}:{tcp_layer.sport})"
+                if check_duplicate.process(f"Land Attack detected {ip_layer.src}"):
+                    save_alert_to_db(msg)
+                    stats.log_alert("Land Attack")
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
 
         # MAC Flooding Detection
         if packet.haslayer(Ether) and packet.haslayer(IP):
@@ -400,10 +406,11 @@ def process_packet(packet):
 
             if len(unique_macs) > MAC_FLOOD_THRESHOLD:
                 msg = f"[ALERT] MAC Flooding attack suspected from {src_ip}: {len(unique_macs)} unique MACs in {MAC_FLOOD_WINDOW}s"
+                if check_duplicate.process(f"MAC Flooding attack suspected from {src_ip}"):
+                    save_alert_to_db(msg)
+                    stats.log_alert("MAC Flooding")
                 print(Fore.RED + msg + Style.RESET_ALL)
-                save_alert_to_db(msg)
                 mac_queue.clear()
-
 
 
         # TCP Port Scan Detection (SYN Scan Pattern)
@@ -424,12 +431,12 @@ def process_packet(packet):
                 unique_ports = {port for port, _ in tcp_scan_log[key]}
                 if len(unique_ports) > TCP_SCAN_THRESHOLD:
                     msg = f"[ALERT] TCP Port Scan detected from {ip.src} to {ip.dst} on ports: {sorted(unique_ports)}"
+                    if check_duplicate.process(f"TCP Port Scan detected from {ip.src}"):
+                        save_alert_to_db(msg)
+                        stats.log_alert("TCP Port Scan")
                     print(Fore.RED + msg + Style.RESET_ALL)
-                    save_alert_to_db(msg)
+
                     tcp_scan_log[key].clear()  # Optional: Reset after detection
-
-
-
 
 
     except Exception as e:
@@ -438,8 +445,5 @@ def process_packet(packet):
 
 def start_sniffing(interface):
     print(f"[*] Sniffing started on: {interface}")
-    sniff(iface=interface, prn=process_packet, store=0)
+    sniff(iface=interface, prn=process_packet, store=0,filter="ip")
 
-
-# 👇 Uncomment and run this with your real interface name
-# start_sniffing("Wi-Fi")  # or "Ethernet"
