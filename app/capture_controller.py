@@ -3,11 +3,22 @@ from threading import Thread, Event
 from scapy.all import sniff
 import psutil
 
-import app.stats_monitor
+import app.stats.stats_monitor
 
 capture_thread = None
 stop_event = Event()
 def start_capture(user_selected_labels):
+    import os
+    file_path = "capture.pcap"
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(e)
+        print("File deleted")
+    else:
+        print("File not found")
+
     from app.detection_engine import process_packet
     # Step 1: Map user-friendly labels to actual interface names
     def convert_labels_to_interfaces(labels):
@@ -37,7 +48,7 @@ def start_capture(user_selected_labels):
 def stop_capture():
     stop_event.set()
     # st = app.stats_monitor.stats.get_stats()
-    app.stats_monitor.stats.save()
+    app.stats.stats_monitor.stats.save()
     # print(st)
 
 def save_alert_to_db(message):

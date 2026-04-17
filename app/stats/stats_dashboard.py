@@ -1,4 +1,31 @@
+# required packages: matplotlib, textwrap
+#  use -> pip install matplotlib textwrap
 
+
+import json
+import os
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import textwrap
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FILE_PATH = os.path.join(BASE_DIR, "stats.json")
+
+
+def load_data():
+    try:
+        with open(FILE_PATH) as f:
+            return json.load(f)
+    except:
+        return {
+            "attack_counts": {},
+            "protocols": {},
+            "ground_truth": {}
+        }
+
+
+def normalize(d):
+    return {k.lower().strip(): v for k, v in d.items()}
 
 
 def calculate_metrics(data):

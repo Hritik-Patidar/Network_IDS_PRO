@@ -1,23 +1,20 @@
-from tabnanny import check
-
 from scapy.all import sniff, IP, TCP, UDP, ICMPv6EchoRequest, get_if_list, IPv6
 from scapy.layers.inet import ICMP
 from colorama import Fore, Style
 from scapy.layers.l2 import Ether
-from app.stats_monitor import stats
-from app import db
-
-from app.deduplicator import AlertDeduplicator
+from app.stats.stats_monitor import stats
+from app.utils.deduplicator import AlertDeduplicator
 check_duplicate=AlertDeduplicator(30) #time in second for duplicate alert expire
 from app.capture_controller import save_alert_to_db
 from scapy.layers.l2 import ARP
-from app.get_m_ip import *
+from app.utils.get_m_ip import *
+from scapy.utils import wrpcap
 interfaces = get_if_list()
 
 # malicious_ips={"192.160.2.2":"hritik patidar",}
 print("Available network interfaces:", interfaces)
 from scapy.layers.dns import DNSQR
-from app.config_loader import load_config
+from app.utils.config_loader import load_config
 from collections import defaultdict, deque, Counter
 from queue import Queue
 import time
@@ -74,7 +71,6 @@ start_time = time.time()
 MAX_PACKETS_PER_SECOND = config.get("MAX_PACKETS_PER_SECOND", 5)     # UI rate limit
 last_sent_time = time.time()
 packet_count = 0
-print_packet = True
 live_packet_queue = Queue()
 
 # Packet Rate (DoS Detection)
@@ -91,14 +87,14 @@ tcp_scan_log = defaultdict(deque)  # (src_ip, dst_ip) -> deque of (port, timesta
 
 # Packet storage (for further processing or export)
 packet_data = []
-
-
+packets_buffer=[]
 def process_packet(packet):
+
     global start_time, last_sent_time, packet_count
     # print(malicious_ips)
     try:
 
-        if print_packet:
+        if packet.haslayer(IP):
             try:
                 current_time = time.time()
                 if current_time - last_sent_time >= 1:
@@ -109,13 +105,20 @@ def process_packet(packet):
                     pkt_size = len(packet)
 
                     # Fix: Get class names of layers
-                    layer_names = [layer.__class__.__name__ for layer in packet.layers()]
-                    proto = " > ".join(layer_names)
-
-                    summary = f"{packet.summary()} | Layers: {proto} | Size: {pkt_size} bytes"
-                    #print(summary)
-                    if packet.haslayer(IP):
-                        live_packet_queue.put(summary)
+                    layer_names = [layer.__name__ for layer in packet.layers()]
+                    proto = layer_names[-1] if layer_names else "UNKNOWN"
+                    packet_summary={
+                                    "src": packet[IP].src,
+                                   "dst": packet[IP].dst,
+                                   "protocol": proto,
+                                   "Size": pkt_size,
+                                   "summary":packet.summary(),
+                                    }
+                    live_packet_queue.put(packet_summary)
+                    packets_buffer.append(packet)
+                    if len(packets_buffer) >= 20:
+                        wrpcap("capture.pcap", packets_buffer, append=True)
+                        packets_buffer.clear()
                     packet_count += 1
 
             except Exception as e:
@@ -171,7 +174,7 @@ def process_packet(packet):
             if pkt_size > ICMP_LARGE_THRESHOLD:
                 msg = f"[ALERT] Large ICMPv6 packet from {src_ip} to {dst_ip} ({pkt_size} bytes)"
                 if check_duplicate.process(f"Large ICMPv6 Packet attack from {src_ip}"):
-                    stats.log_alert("Large ICMPv6 Packet")
+                    stats.log_alert("Large ICMP Packet")
                     save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
 
@@ -196,7 +199,7 @@ def process_packet(packet):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
             malicious_ips=save_malicious_ips_to_file()
-            if src_ip in malicious_ips:
+            if src_ip in malicious_ips.keys():
                 msg = f"[ALERT] Malicious source IP: {src_ip} ({malicious_ips[src_ip]})"
                 if check_duplicate.process(f"Malicious source IP: {src_ip} ({malicious_ips[src_ip]}"):
                     stats.log_alert("Malicious IP")
@@ -275,7 +278,7 @@ def process_packet(packet):
 
             # Check if flood threshold exceeded
             if len(udp_packet_log[src_ip]) > UDP_THRESHOLD:
-                msg = f"[ALERT] UDP Flood detected from {src_ip}: {len(udp_packet_log[src_ip])} packets in {UDP_TIME_WINDOW} seconds"
+                msg = f"[ALERT] UDP Flood/Port Scan detected from {src_ip}: {len(udp_packet_log[src_ip])} packets in {UDP_TIME_WINDOW} seconds"
                 if check_duplicate.process(f"UDP Flood detected from {src_ip}"):
                     save_alert_to_db(msg)
                     stats.log_alert("UDP Flood")

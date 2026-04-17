@@ -1,6 +1,6 @@
 from flask_login import UserMixin
 from datetime import datetime
-from . import db  # this is okay after the fix
+from . import db
 
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -11,6 +11,7 @@ class Alert(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.String(100), nullable=False)
     message = db.Column(db.String(500), nullable=False)
+    # payload = db.Column(db.String(10000), nullable=True)
 
 class MaliciousIP(db.Model):
     id = db.Column(db.Integer, primary_key=True)

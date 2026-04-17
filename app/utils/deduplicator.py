@@ -8,13 +8,13 @@ class AlertDeduplicator:
     def process(self, alert):
         current = time.time()
 
-        # Agar alert already hai
+        # is alert already there
         if alert in self.active_alerts:
             if self.active_alerts[alert] > current:
                 return False  # duplicate → skip
             else:
                 del self.active_alerts[alert]  # expired → remove
 
-        # New alert add karo
+        # add new
         self.active_alerts[alert] = current + self.expiry
         return True
