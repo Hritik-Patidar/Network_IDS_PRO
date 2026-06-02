@@ -1,54 +1,47 @@
+import traceback
+
+from more_itertools.more import extract
 from scapy.all import sniff, IP, TCP, UDP, ICMPv6EchoRequest, get_if_list, IPv6
 from scapy.layers.inet import ICMP
 from colorama import Fore, Style
 from scapy.layers.l2 import Ether
+
+from app.data.config_loader import load_config
 from app.stats.stats_monitor import stats
 from app.utils.deduplicator import AlertDeduplicator
-check_duplicate=AlertDeduplicator(30) #time in second for duplicate alert expire
 from app.capture_controller import save_alert_to_db
 from scapy.layers.l2 import ARP
+
+from app.utils.extract_attributes import extract_attributes
 from app.utils.get_m_ip import *
 from scapy.utils import wrpcap
-interfaces = get_if_list()
-
-# malicious_ips={"192.160.2.2":"hritik patidar",}
-print("Available network interfaces:", interfaces)
 from scapy.layers.dns import DNSQR
-from app.utils.config_loader import load_config
 from collections import defaultdict, deque, Counter
 from queue import Queue
 import time
-# Load config from file
-config = load_config("config.txt")
+check_duplicate=AlertDeduplicator(30) #time in second for duplicate alert expire
 
+# Load config from file
+config = load_config()
+rule={"tcp":{"*:*:*:*:A": "Alert ack  packet from tcp",
+             "20.42.73.27:*:*:*:*":"specfic ip address alert 20.42.73.27"},
+      "udp":{"*:*:53:*":"alert udp 53 port packet "}}
 # MAC Flooding
-MAC_FLOOD_WINDOW = config.get("MAC_FLOOD_WINDOW", 10)                # seconds
-MAC_FLOOD_THRESHOLD = config.get("MAC_FLOOD_THRESHOLD", 50)          # unique MACs in window
 mac_seen = defaultdict(lambda: deque())  # src_ip -> deque of (mac, timestamp)
 
 # ICMP Smurf Attack Detection
-ICMP_SMURF_THRESHOLD = config.get("ICMP_SMURF_THRESHOLD", 10)        # packets in time window
-ICMP_SMURF_WINDOW = config.get("ICMP_SMURF_WINDOW", 5)               # seconds
 icmp_broadcast_tracker = deque()  # list of (timestamp, src_ip)
 
 # IP Fragmentation Attack Detection
-FRAG_THRESHOLD = config.get("FRAG_THRESHOLD", 10)                    # fragments allowed
-FRAG_WINDOW = config.get("FRAG_WINDOW", 5)                           # seconds
 fragment_count = defaultdict(deque)  # {src_ip: deque of timestamps}
 
 # TCP RST Flood Detection
-RST_FLOOD_THRESHOLD = config.get("RST_FLOOD_THRESHOLD", 100)        # packets/sec
-RST_WINDOW_SECONDS = config.get("RST_WINDOW_SECONDS", 1)            # window
 rst_packet_count = defaultdict(deque)
 
 # UDP Flood Detection
-UDP_THRESHOLD = config.get("UDP_THRESHOLD", 100)                     # packets
-UDP_TIME_WINDOW = config.get("UDP_TIME_WINDOW", 5)                   # seconds
 udp_packet_log = defaultdict(deque)
 
 # DNS Tunneling Detection
-QUERY_RATE_THRESHOLD = config.get("QUERY_RATE_THRESHOLD", 20)       # max queries/domain
-TIME_WINDOW_DNS = config.get("TIME_WINDOW_DNS", 60)                 # seconds
 dns_query_counts = defaultdict(int)
 dns_last_seen = {}
 
@@ -56,40 +49,44 @@ dns_last_seen = {}
 arp_table = {}  # ip -> mac
 
 # Large ICMP Packet Flood
-ICMP_LARGE_THRESHOLD = config.get("ICMP_LARGE_THRESHOLD", 1000)      # size in bytes
-ICMP_ALERT_LIMIT = config.get("ICMP_ALERT_LIMIT", 5)                 # alert threshold
-ICMP_ALERT_WINDOW = config.get("ICMP_ALERT_WINDOW", 7)               # seconds
 icmp_alert_times = deque(maxlen=100)
 
 # SYN Scan Detection
-SYN_THRESHOLD = config.get("SYN_THRESHOLD", 20)                              # SYN count per window
-TIME_WINDOW = config.get("TIME_WINDOW", 6)                           # seconds
 syn_count = Counter()
 start_time = time.time()
 
 # Live Packet Display Rate Limiting
-MAX_PACKETS_PER_SECOND = config.get("MAX_PACKETS_PER_SECOND", 5)     # UI rate limit
 last_sent_time = time.time()
 packet_count = 0
 live_packet_queue = Queue()
 
-# Packet Rate (DoS Detection)
-PACKET_RATE_THRESHOLD_DOS = config.get("PACKET_RATE_THRESHOLD_DOS", 200)  # packets/sec/IP
-RATE_TIME_WINDOW_DOS = config.get("RATE_TIME_WINDOW_DOS", 1)              # seconds
+# (DoS Detection)
 packet_rate_map = defaultdict(deque)
 
-
 # TCP Port Scan Detection
-TCP_SCAN_WINDOW = config.get("TCP_SCAN_WINDOW", 10)  # seconds
-TCP_SCAN_THRESHOLD = config.get("TCP_SCAN_THRESHOLD", 15)  # unique ports in time window
 tcp_scan_log = defaultdict(deque)  # (src_ip, dst_ip) -> deque of (port, timestamp)
-
 
 # Packet storage (for further processing or export)
 packet_data = []
 packets_buffer=[]
-def process_packet(packet):
 
+def process_packet(packet):
+    attribute=extract_attributes(packet)
+    if attribute:
+        hashs = attribute.get("hash_strings")
+        if attribute.get("protocol")=="tcp":
+            for hash in hashs:
+                if rule.get("tcp", {}).get(hash):
+                    print(f"[rule matched : tcp ]{hash}")
+                    print(rule.get("tcp", {}).get(hash))
+                    break
+        elif attribute.get("protocol") == "udp":
+            for hash in hashs:
+                if rule.get("udp", {}).get(hash):
+                    print(f"[rule matched : udp ]{hash}")
+                    print(rule.get("udp", {}).get(hash))
+                    break
+        # print(attribute.get("hash_strings"))
     global start_time, last_sent_time, packet_count
     # print(malicious_ips)
     try:
@@ -101,7 +98,7 @@ def process_packet(packet):
                     last_sent_time = current_time
                     packet_count = 0
 
-                if packet_count < MAX_PACKETS_PER_SECOND:
+                if packet_count < config["MAX_PACKETS_PER_SECOND"]:
                     pkt_size = len(packet)
 
                     # Fix: Get class names of layers
@@ -123,6 +120,9 @@ def process_packet(packet):
 
             except Exception as e:
                 print(f"[WARNING] Packet skipped: {e}")
+                print("\n========== TRACEBACK ==========")
+                traceback.print_exc()
+                print("================================\n")
 
         # SYN Scan Detection
         if packet.haslayer(TCP) and packet[TCP].flags == 2:  # SYN
@@ -130,10 +130,11 @@ def process_packet(packet):
             syn_count[src_ip] += 1
             stats.log_packet("TCP")
 
-            if time.time() - start_time > TIME_WINDOW:
+            if time.time() - start_time > config["TIME_WINDOW"]:
                 for ip, count in syn_count.items():
-                    if count > SYN_THRESHOLD:
-                        msg = f"[ALERT] Possible SYN scan from {ip} ({count} SYNs in {TIME_WINDOW}s)"
+                    if count > config["SYN_THRESHOLD"]:
+                        sec=config["TIME_WINDOW"]
+                        msg = f"[ALERT] Possible SYN scan from {ip} ({count} SYNs in {sec}s)"
                         if check_duplicate.process(f"SYN Scan attack from {ip}"):
                             stats.log_alert("SYN Scan")
                             save_alert_to_db(msg)
@@ -147,18 +148,18 @@ def process_packet(packet):
             pkt_size = len(packet)
             stats.log_packet("TCP")
 
-            if pkt_size > ICMP_LARGE_THRESHOLD:
+            if pkt_size > config["ICMP_LARGE_THRESHOLD"]:
                 current_time = time.time()
                 icmp_alert_times.append(current_time)
 
                 # Remove timestamps older than 5 seconds
-                while icmp_alert_times and current_time - icmp_alert_times[0] > ICMP_ALERT_WINDOW:
+                while icmp_alert_times and current_time - icmp_alert_times[0] > config["ICMP_ALERT_WINDOW"]:
                     icmp_alert_times.popleft()
 
-                if len(icmp_alert_times) > ICMP_ALERT_LIMIT:
+                if len(icmp_alert_times) > config["ICMP_ALERT_LIMIT"]:
                     src_ip = packet[IP].src
                     dst_ip = packet[IP].dst
-                    msg = f"[ALERT] ICMP Flood? More than {ICMP_ALERT_LIMIT} large ICMP packets in {ICMP_ALERT_WINDOW}s. Latest from {src_ip} to {dst_ip} ({pkt_size} bytes)"
+                    msg = f"[ALERT] ICMP Flood? More than { config['ICMP_ALERT_LIMIT'] } large ICMP packets in {['ICMP_ALERT_WINDOW']}s. Latest from {src_ip} to {dst_ip} ({pkt_size} bytes)"
                     if check_duplicate.process(f"Large ICMP Packet attack from {src_ip}"):
                         stats.log_alert("Large ICMP Packet")
                         save_alert_to_db(msg)
@@ -171,7 +172,7 @@ def process_packet(packet):
             src_ip = packet[IPv6].src
             dst_ip = packet[IPv6].dst
             pkt_size = len(packet)
-            if pkt_size > ICMP_LARGE_THRESHOLD:
+            if pkt_size > config['ICMP_LARGE_THRESHOLD']:
                 msg = f"[ALERT] Large ICMPv6 packet from {src_ip} to {dst_ip} ({pkt_size} bytes)"
                 if check_duplicate.process(f"Large ICMPv6 Packet attack from {src_ip}"):
                     stats.log_alert("Large ICMP Packet")
@@ -228,22 +229,20 @@ def process_packet(packet):
                 dns_last_seen[domain] = current_time
                 dns_query_counts[domain] = 1
             else:
-                if current_time - dns_last_seen[domain] < TIME_WINDOW_DNS:
+                if current_time - dns_last_seen[domain] < config['TIME_WINDOW_DNS']:
                     dns_query_counts[domain] += 1
                 else:
                     dns_query_counts[domain] = 1
                     dns_last_seen[domain] = current_time
 
             # Rule 3: Query rate too high in short time
-            if dns_query_counts[domain] > QUERY_RATE_THRESHOLD or long_label:
+            if dns_query_counts[domain] > config['QUERY_RATE_THRESHOLD'] or long_label:
                 msg = f"[ALERT] Possible DNS tunneling detected: {domain} | Count: {dns_query_counts[domain]}"
 
                 if check_duplicate.process(f"Possible DNS tunneling detected: {domain}"):
                     stats.log_alert("DNS tunneling")
                     save_alert_to_db(msg)
                 print(Fore.RED + msg + Style.RESET_ALL)
-
-
 
 
         # ARP Spoofing Detection
@@ -273,12 +272,12 @@ def process_packet(packet):
             udp_packet_log[src_ip].append(now)
 
             # Remove old entries outside the time window
-            while udp_packet_log[src_ip] and now - udp_packet_log[src_ip][0] > UDP_TIME_WINDOW:
+            while udp_packet_log[src_ip] and now - udp_packet_log[src_ip][0] > config['UDP_TIME_WINDOW']:
                 udp_packet_log[src_ip].popleft()
 
             # Check if flood threshold exceeded
-            if len(udp_packet_log[src_ip]) > UDP_THRESHOLD:
-                msg = f"[ALERT] UDP Flood/Port Scan detected from {src_ip}: {len(udp_packet_log[src_ip])} packets in {UDP_TIME_WINDOW} seconds"
+            if len(udp_packet_log[src_ip]) > config['UDP_THRESHOLD']:
+                msg = f"[ALERT] UDP Flood/Port Scan detected from {src_ip}: {len(udp_packet_log[src_ip])} packets in {config['UDP_TIME_WINDOW']} seconds"
                 if check_duplicate.process(f"UDP Flood detected from {src_ip}"):
                     save_alert_to_db(msg)
                     stats.log_alert("UDP Flood")
@@ -294,12 +293,12 @@ def process_packet(packet):
             packet_rate_map[src_ip].append(current_time)
 
             # Remove old timestamps outside the rate window
-            while packet_rate_map[src_ip] and current_time - packet_rate_map[src_ip][0] > RATE_TIME_WINDOW_DOS:
+            while packet_rate_map[src_ip] and current_time - packet_rate_map[src_ip][0] > config['RATE_TIME_WINDOW_DOS']:
                 packet_rate_map[src_ip].popleft()
 
             # Check if rate exceeds threshold
-            if len(packet_rate_map[src_ip]) > PACKET_RATE_THRESHOLD_DOS:
-                msg = f"[ALERT] DoS Suspected: High packet rate from {src_ip} - {len(packet_rate_map[src_ip])} packets in {RATE_TIME_WINDOW_DOS}s"
+            if len(packet_rate_map[src_ip]) > config['PACKET_RATE_THRESHOLD_DOS']:
+                msg = f"[ALERT] DoS Suspected: High packet rate from {src_ip} - {len(packet_rate_map[src_ip])} packets in {config['RATE_TIME_WINDOW_DOS']}s"
                 if check_duplicate.process(f"DoS Suspected from {src_ip}"):
                     save_alert_to_db(msg)
                     stats.log_alert("DoS")
@@ -316,12 +315,12 @@ def process_packet(packet):
                 rst_packet_count[src_ip].append(current_time)
 
                 # Remove timestamps older than the time window
-                while rst_packet_count[src_ip] and current_time - rst_packet_count[src_ip][0] > RST_WINDOW_SECONDS:
+                while rst_packet_count[src_ip] and current_time - rst_packet_count[src_ip][0] > ['RST_WINDOW_SECONDS']:
                     rst_packet_count[src_ip].popleft()
 
                 # Check if count exceeds threshold
-                if len(rst_packet_count[src_ip]) > RST_FLOOD_THRESHOLD:
-                    msg = f"[ALERT] TCP RST Flood suspected from {src_ip} - {len(rst_packet_count[src_ip])} RSTs in {RST_WINDOW_SECONDS}s"
+                if len(rst_packet_count[src_ip]) > config['RST_FLOOD_THRESHOLD']:
+                    msg = f"[ALERT] TCP RST Flood suspected from {src_ip} - {len(rst_packet_count[src_ip])} RSTs in {['RST_WINDOW_SECONDS']}s"
                     if check_duplicate.process(f"TCP RST Flood suspected from {src_ip}"):
                         save_alert_to_db(msg)
                         stats.log_alert("TCP RST Flood")
@@ -338,11 +337,11 @@ def process_packet(packet):
                 fragment_count[src_ip].append(current_time)
 
                 # Remove old timestamps outside the window
-                while fragment_count[src_ip] and current_time - fragment_count[src_ip][0] > FRAG_WINDOW:
+                while fragment_count[src_ip] and current_time - fragment_count[src_ip][0] > ['FRAG_WINDOW']:
                     fragment_count[src_ip].popleft()
 
-                if len(fragment_count[src_ip]) > FRAG_THRESHOLD:
-                    msg = f"[ALERT] Possible IP Fragmentation attack from {src_ip} - {len(fragment_count[src_ip])} fragments in {FRAG_WINDOW}s"
+                if len(fragment_count[src_ip]) > config['FRAG_THRESHOLD']:
+                    msg = f"[ALERT] Possible IP Fragmentation attack from {src_ip} - {len(fragment_count[src_ip])} fragments in {['FRAG_WINDOW']}s"
                     if check_duplicate.process(f"IP Fragmentation attack from {src_ip}"):
                         save_alert_to_db(msg)
                         stats.log_alert("IP Fragmentation")
@@ -366,12 +365,12 @@ def process_packet(packet):
                     icmp_broadcast_tracker.append((current_time, src_ip))
 
                     # Remove old entries
-                    while icmp_broadcast_tracker and current_time - icmp_broadcast_tracker[0][0] > ICMP_SMURF_WINDOW:
+                    while icmp_broadcast_tracker and current_time - icmp_broadcast_tracker[0][0] > config['ICMP_SMURF_WINDOW']:
                         icmp_broadcast_tracker.popleft()
 
                     # Count how many pings went to broadcast recently
-                    if len(icmp_broadcast_tracker) > ICMP_SMURF_THRESHOLD:
-                        msg = f"[ALERT] Possible Smurf Attack: {len(icmp_broadcast_tracker)} ICMP Echo Requests to broadcast addresses in {ICMP_SMURF_WINDOW}s. Latest from {src_ip}"
+                    if len(icmp_broadcast_tracker) > config['ICMP_SMURF_THRESHOLD']:
+                        msg = f"[ALERT] Possible Smurf Attack: {len(icmp_broadcast_tracker)} ICMP Echo Requests to broadcast addresses in {config['ICMP_SMURF_WINDOW']}s. Latest from {src_ip}"
                         if check_duplicate.process(f"Smurf Attack from {src_ip}"):
                             save_alert_to_db(msg)
                             stats.log_alert("Smurf Attack")
@@ -401,14 +400,14 @@ def process_packet(packet):
             mac_queue.append((src_mac, now))
 
             # Remove MACs outside the time window
-            while mac_queue and now - mac_queue[0][1] > MAC_FLOOD_WINDOW:
+            while mac_queue and now - mac_queue[0][1] > config['MAC_FLOOD_WINDOW']:
                 mac_queue.popleft()
 
             # Count unique MACs in the window
             unique_macs = set(mac for mac, _ in mac_queue)
 
-            if len(unique_macs) > MAC_FLOOD_THRESHOLD:
-                msg = f"[ALERT] MAC Flooding attack suspected from {src_ip}: {len(unique_macs)} unique MACs in {MAC_FLOOD_WINDOW}s"
+            if len(unique_macs) > config['MAC_FLOOD_THRESHOLD']:
+                msg = f"[ALERT] MAC Flooding attack suspected from {src_ip}: {len(unique_macs)} unique MACs in {['MAC_FLOOD_WINDOW']}s"
                 if check_duplicate.process(f"MAC Flooding attack suspected from {src_ip}"):
                     save_alert_to_db(msg)
                     stats.log_alert("MAC Flooding")
@@ -427,12 +426,12 @@ def process_packet(packet):
                 tcp_scan_log[key].append((tcp.dport, now))
 
                 # Remove old entries
-                while tcp_scan_log[key] and now - tcp_scan_log[key][0][1] > TCP_SCAN_WINDOW:
+                while tcp_scan_log[key] and now - tcp_scan_log[key][0][1] > config['TCP_SCAN_WINDOW']:
                     tcp_scan_log[key].popleft()
 
                 # Count unique destination ports
                 unique_ports = {port for port, _ in tcp_scan_log[key]}
-                if len(unique_ports) > TCP_SCAN_THRESHOLD:
+                if len(unique_ports) > config['TCP_SCAN_THRESHOLD']:
                     msg = f"[ALERT] TCP Port Scan detected from {ip.src} to {ip.dst} on ports: {sorted(unique_ports)}"
                     if check_duplicate.process(f"TCP Port Scan detected from {ip.src}"):
                         save_alert_to_db(msg)
@@ -444,6 +443,9 @@ def process_packet(packet):
 
     except Exception as e:
         print(Fore.YELLOW + f"[WARNING] Packet skipped: {e}" + Style.RESET_ALL)
+        # print("\n========== TRACEBACK ==========")
+        # traceback.print_exc()
+        # print("================================\n")
 
 
 def start_sniffing(interface):

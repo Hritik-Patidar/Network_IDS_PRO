@@ -53,7 +53,7 @@ def stop_capture():
 
 def save_alert_to_db(message):
     from app import db, create_app
-    from app.models import Alert
+    from app.data.models import Alert
     import datetime
 
     app = create_app()

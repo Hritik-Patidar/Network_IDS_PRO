@@ -23,7 +23,7 @@ def create_app():
     login_manager.login_view = 'views.login'
 
     # Import models after db is initialized
-    from .models import User
+    from app.data.models import User
 
     @login_manager.user_loader
     def load_user(user_id):

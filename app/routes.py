@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, redirect, request, url_for, flash, jsonify, Response
-from flask_login import login_user, login_required, logout_user, current_user
-from app.models import User, Alert, MaliciousIP
+from flask_login import login_user, login_required, logout_user
+from app.data.models import User, Alert, MaliciousIP
 from werkzeug.security import check_password_hash
 import psutil
 import time
@@ -46,7 +46,7 @@ def start_capture_route():
         return redirect(url_for('views.dashboard'))
 
     start_capture(selected_interfaces)
-    is_capturing = True  # FIX: Status updated globally
+    is_capturing = True  # Status updated globally
     flash('NIDS Security Shield Activated.')
     return redirect(url_for('views.dashboard'))
 
@@ -64,7 +64,7 @@ def stop_capture_route():
 def stream_packets():
     def generate():
         while True:
-            # Agar queue empty nahi hai toh message bhejo
+            # Agar queue empty nahi hai toh message bh
             if not live_packet_queue.empty():
                 message = live_packet_queue.get()
                 yield f"data: {message}\n\n"
