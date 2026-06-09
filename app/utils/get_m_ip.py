@@ -1,7 +1,7 @@
 # app/save_malicious_ips.py
 
 from app import create_app
-from app.models import MaliciousIP
+from app.data.models import MaliciousIP
 
 def save_malicious_ips_to_file():
     app = create_app()

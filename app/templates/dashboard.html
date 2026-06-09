@@ -1,300 +1,232 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Network IDS Dashboard</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f4f6f9;
-      margin: 0;
-      padding: 0;
-    }
-
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #2c3e50;
-      color: white;
-      padding: 12px 20px;
-    }
-
-    header h2 {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 22px;
-      margin: 0;
-    }
-
-    .dashboard-container {
-      display: grid;
-      grid-template-columns: 1fr 2fr;
-      gap: 20px;
-      padding: 20px;
-    }
-
-    .section {
-      background: white;
-      padding: 15px;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    h2, h3 {
-      margin-top: 0;
-    }
-
-    ul {
-      list-style: none;
-      padding-left: 0;
-    }
-
-    li {
-      background: #eef2f5;
-      margin: 5px 0;
-      padding: 8px;
-      border-radius: 5px;
-      font-size: 14px;
-    }
-
-    .logout-btn {
-      background: #e74c3c;
-      border: none;
-      color: white;
-      padding: 8px 16px;
-      border-radius: 5px;
-      cursor: pointer;
-      text-decoration: none;
-    }
-
-    .form-group {
-      margin-bottom: 10px;
-    }
-
-    button {
-      padding: 8px 16px;
-      border-radius: 6px;
-      border: none;
-      cursor: pointer;
-      font-weight: bold;
-      transition: background 0.3s ease;
-      background-color: #3498db;
-      color: white;
-    }
-
-    button:hover {
-      background-color: #2980b9;
-    }
-
-    .danger-btn {
-      background-color: #e74c3c !important;
-    }
-
-    .danger-btn:hover {
-      background-color: #c0392b !important;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentry Command | NetworkShield</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap">
+    <style>
+        :root {
+            --bg-deep: #020617; --sidebar-bg: #0f172a; --panel-bg: #1e293b;
+            --accent: #38bdf8; --danger: #ef4444; --success: #10b981;
+            --text-main: #f8fafc; --text-dim: #94a3b8; --border: #334155;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-deep); color: var(--text-main); height: 100vh; overflow: hidden; display: flex; }
+        nav { width: 280px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 25px; z-index: 100; }
+        .top-nav { position: fixed; top: 0; left: 280px; right: 0; height: 65px; background: rgba(15,23,42,0.8); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 30px; z-index: 90; }
+        main { flex: 1; padding: 85px 30px 30px 30px; display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .stat-card { background: var(--panel-bg); padding: 18px; border-radius: 12px; border: 1px solid var(--border); }
+        .stat-card span { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; flex: 1; min-height: 0; }
+        .panel { background: var(--panel-bg); border-radius: 16px; border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+        .panel-header { padding: 15px 20px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .panel-body { padding: 15px; overflow-y: auto; flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+        .btn { padding: 10px 18px; border-radius: 8px; font-weight: 700; cursor: pointer; border: none; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+        .btn-primary { background: var(--accent); color: #000; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-main); margin-top: 10px; }
+        .iface-item { padding: 10px; background: rgba(2, 6, 23, 0.5); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: var(--panel-bg); width: 500px; padding: 30px; border-radius: 20px; border: 1px solid var(--border); }
+        #packet-list li {
+            color: var(--success);
+            list-style: none;
+            border-bottom: 1px solid #ffffff05;
+            padding: 4px 0;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        #packet-list .packet-entry {
+            opacity: 1;
+            max-height: 120px;
+            transform: translateY(0);
+            transition: opacity 0.35s ease, transform 0.35s ease, max-height 0.35s ease, padding 0.35s ease;
+        }
+        #packet-list .packet-entry.entering {
+            opacity: 0;
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            transform: translateY(-14px);
+        }
+        #alert-list li {
+            transition: opacity 0.35s ease, transform 0.35s ease;
+        }
+        #alert-list li { background: rgba(239, 68, 68, 0.1); color: #fca5a5; padding: 10px; border-radius: 6px; margin-bottom: 8px; list-style: none; border-left: 3px solid var(--danger); }
+        .status-pulse { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .pulse-active { background: var(--success); box-shadow: 0 0 10px var(--success); animation: blink 1.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .hidden { display: none !important; }
+    </style>
 </head>
 <body>
 
-  <header>
-    <h2>
-      <img src="{{ url_for('static', filename='nids-icon.png') }}" alt="NIDS" style="height: 70px;">
-       <span style="font-size: 18px; color: #ccc;">NetworkShield Sentry(Network Intrusion Detection System)</span>
-    </h2>
-    <div style="display: flex; align-items: center; gap: 10px;">
-      <div title="Admin User"
-     style="width: 35px; height: 35px; border-radius: 50%; background-color: #2980b9; color: white; display: flex; justify-content: center; align-items: center; font-weight: bold;">
-  {{ current_user.username[0]|upper }}
-</div>
+    <nav>
+        <div style="font-size: 1.3rem; font-weight: 800; color: var(--accent); margin-bottom: 40px; text-align: center;">🛡️ SENTRY OPS</div>
 
-      <a href="/logout" class="logout-btn">Logout</a>
-    </div>
-  </header>
-
-  {% with messages = get_flashed_messages() %}
-  {% if messages %}
-    <div id="flashPopup" style="display: flex; position: fixed; top: 0; left: 0;
-      width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 9999;
-      justify-content: center; align-items: center;">
-      <div style="background: white; padding: 20px; border-radius: 10px; max-width: 400px; text-align: center;">
-        <h3 style="margin-top: 0;">🔔 Message</h3>
-        <ul style="list-style: none; padding: 0;">
-          {% for message in messages %}
-            <li style="margin: 10px 0; color: #e74c3c; font-weight: bold;">{{ message }}</li>
-          {% endfor %}
-        </ul>
-        <button onclick="closeFlashPopup()" style="margin-top: 15px; padding: 6px 16px; background-color: #2c3e50; color: white; border: none; border-radius: 5px; cursor: pointer;">
-          OK
-        </button>
-      </div>
-    </div>
-    <script>
-      function closeFlashPopup() {
-        document.getElementById("flashPopup").style.display = "none";
-      }
-    </script>
-  {% endif %}
-{% endwith %}
-
-
-  <div class="dashboard-container">
-
-    <!-- LEFT: Interface Controls -->
-    <div class="section">
-      <h3>1. Interface Controls</h3>
-      <form method="POST" action="/start-capture" onsubmit="return validateForm();">
-        <div class="interface-checkboxes">
-          <label>Select Interfaces:</label><br>
-          {% for iface in interfaces %}
-            <label>
-              <input type="checkbox" name="interfaces" value="{{ iface.name }}">
-              {{ iface.label }}
-            </label><br>
-          {% endfor %}
-        </div>
-        <button type="submit">Start Capturing</button>
-      </form>
-
-      <form method="POST" action="/stop-capture" style="margin-top: 10px;">
-        <button type="submit" class="danger-btn">Stop Capturing</button>
-      </form>
-
-      <script>
-        function validateForm() {
-          const checkboxes = document.querySelectorAll('input[name="interfaces"]:checked');
-          if (checkboxes.length === 0) {
-            alert('Please select at least one interface.');
-            return false;
-          }
-          return true;
-        }
-      </script>
-
-      <hr>
-
-      <h3>3. Add Malicious IP</h3>
-      <form method="POST" action="/add-ip">
-        <div class="form-group">
-          <input name="ip" placeholder="IP Address" required>
-        </div>
-        <div class="form-group">
-          <input name="desc" placeholder="Description" required>
-        </div>
-        <button>Add</button>
-      </form>
-
-      <ul>
-        {% for ip in malicious_ips %}
-          <li>
-            {{ ip.ip_address }} — {{ ip.description }}
-            <form method="POST" action="/delete-ip/{{ ip.id }}" style="display:inline;">
-              <button type="submit" style="background:none; border:none; color:red; cursor:pointer;" title="Delete">🗑️</button>
+        <div id="interface-box" class="{{ 'hidden' if capturing }}">
+            <p style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 15px;">AVAILABLE INTERFACES</p>
+            <form action="{{ url_for('views.start_capture_route') }}" method="POST">
+                <div style="max-height: 250px; overflow-y: auto; margin-bottom: 15px;">
+                    {% for iface in interfaces %}
+                    <label class="iface-item">
+                        <input type="checkbox" name="interfaces" value="{{ iface.name }}">
+                        <span style="font-size: 0.8rem;">{{ iface.label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">DEPLOY SHIELD</button>
             </form>
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
-
-    <!-- RIGHT: Alerts + Logs -->
-    <div>
-      <div class="section" style="max-height: 300px; overflow-y: auto;">
-        <h3>2. Live Alerts</h3>
-        <ul id="alert-list" style="max-height: 150px; overflow-y: auto;"></ul>
-        <button onclick="deleteAllAlerts()" class="danger-btn" style="margin-top: 10px;">🗑️ Delete All Alerts</button>
-        <button onclick="openAlertModal()">🔍 View All Alerts</button>
-      </div>
-<style>
-  #alert-list li {
-    color: red;
-    font-weight: bold;
-  }
-</style>
-      <!-- Alert Modal -->
-      <div id="alertModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background-color: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
-        <div style="background: white; width: 80%; max-height: 80%; overflow-y: auto; padding: 20px;
-          border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-          <h3>📋 All Alerts</h3>
-          <ul id="modal-alert-list" style="list-style-type: none; padding-left: 0;"></ul>
-          <button onclick="closeAlertModal()" class="danger-btn" style="margin-top: 10px;">❌ Close</button>
         </div>
-      </div>
 
-      <div class="section" style="margin-top: 15px; max-height: 300px; overflow-y: auto;">
-        <h3 style="position: sticky; top: 0; background: white; padding-bottom: 5px; z-index: 1;">Live Packet Logs</h3>
-        <ul id="packet-list" style="max-height: 250px; overflow-y: auto;"></ul>
-      </div>
+        <div id="monitoring-box" class="{{ '' if capturing else 'hidden' }}">
+            <div style="padding: 20px; background: rgba(16, 185, 129, 0.05); border: 1px solid var(--success); border-radius: 12px; text-align: center;">
+                <div class="status-pulse pulse-active"></div>
+                <span style="color: var(--success); font-weight: bold; font-size: 0.9rem;">THREAT SCANNING</span>
+            </div>
+            <form action="{{ url_for('views.stop_capture_route') }}" method="POST" style="margin-top: 15px;">
+                <button type="submit" class="btn btn-danger" style="width: 100%;">ABORT SCAN</button>
+            </form>
+        </div>
+
+        <div style="margin-top: auto;">
+            <button class="btn btn-ghost" onclick="openModal('statsModal')" style="width: 100%;">📊 TELEMETRY</button>
+            <button class="btn btn-ghost" onclick="openModal('blacklistModal')" style="width: 100%;">🛡️ BLACKLIST</button>
+            <button class="btn btn-ghost" onclick="openModal('rulesModal')" style="width: 100%;">RULES</button>
+        </div>
+    </nav>
+
+    <div class="top-nav">
+        <div style="display: flex; gap: 15px;">
+            <button class="btn btn-ghost" onclick="location.reload()">REFRESH</button>
+            <button class="btn btn-ghost" style="color: var(--danger);" onclick="clearAllAlerts()">CLEAR LOGS</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; cursor: pointer;" onclick="openModal('profileModal')">
+            <div style="text-align: right;">
+                <p style="font-size: 0.85rem; font-weight: 700;">{{ current_user.username }}</p>
+                <p style="font-size: 0.65rem; color: var(--success);">MASTER_ADMIN</p>
+            </div>
+            <div style="width: 40px; height: 40px; background: var(--accent); color: #000; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 900;">{{ current_user.username[0]|upper }}</div>
+        </div>
     </div>
 
-  </div>
+    <main>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span>Shield Status</span>
+                <h3 style="color: {{ 'var(--success)' if capturing else 'var(--danger)' }}">{{ 'OPERATIONAL' if capturing else 'OFFLINE' }}</h3>
+            </div>
+            <div class="stat-card"><span>Intercepted</span><h3 id="packet-counter">0</h3></div>
+            <div class="stat-card"><span>Threats</span><h3 id="alert-counter">{{ alerts|length }}</h3></div>
+            <div class="stat-card"><span>Nodes</span><h3>{{ interfaces|length }}</h3></div>
+        </div>
 
-  <script>
-    function loadAlerts() {
-      fetch('/get-alerts')
-        .then(response => response.json())
-        .then(data => {
-          const alertContainer = document.getElementById("alert-list");
-          alertContainer.innerHTML = '';
-          data.forEach(alert => {
-            const item = document.createElement("li");
-            item.textContent = `[${alert.timestamp}] ${alert.message}`;
-            alertContainer.appendChild(item);
-          });
-        });
-    }
+        <div class="dashboard-grid">
+            <div class="panel">
+                <div class="panel-header"><h3>Events</h3></div>
+                <div class="panel-body"><ul id="alert-list">{% for alert in alerts %}<li>[LOG] {{ alert.message }}</li>{% endfor %}</ul></div>
+            </div>
+            <div class="panel">
+                <div class="panel-header"><h3>Live Traffic</h3><div class="status-pulse {{ 'pulse-active' if capturing }}"></div></div>
+                <div class="panel-body" style="background: #020617; color: var(--success);"><ul id="packet-list"></ul></div>
+            </div>
+        </div>
+    </main>
 
-    function deleteAllAlerts() {
-      if (!confirm("Are you sure you want to delete all alerts?")) return;
-      fetch('/delete-all-alerts', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-          alert(data.message);
-          document.getElementById("modal-alert-list").innerHTML = "";
-        })
-        .catch(error => {
-          alert("Error deleting alerts.");
-          console.error(error);
-        });
-    }
+    <div id="profileModal" class="modal"><div class="modal-content" style="text-align: center;"><h3>{{ current_user.username }}</h3><a href="{{ url_for('views.logout') }}" class="btn btn-danger" style="margin-top: 20px;">LOGOUT</a><button class="btn btn-ghost" onclick="closeModal('profileModal')">CLOSE</button></div></div>
 
-    function openAlertModal() {
-      document.getElementById("alertModal").style.display = "flex";
-      fetch('/get-all-alerts')
-        .then(response => response.json())
-        .then(data => {
-          const alertContainer = document.getElementById("modal-alert-list");
-          alertContainer.innerHTML = '';
-          data.forEach(alert => {
-            const item = document.createElement("li");
-            item.textContent = `[${alert.timestamp}] ${alert.message}`;
-            alertContainer.appendChild(item);
-          });
-        });
-    }
+    <div id="blacklistModal" class="modal"><div class="modal-content">
+        <h3>🛡️ Blacklist</h3>
+        <form action="{{ url_for('views.add_ip') }}" method="POST" style="display: flex; gap: 5px; margin: 15px 0;">
+            <input name="ip" placeholder="IP" required style="flex:1; padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="desc" placeholder="Reason" required style="flex:1; padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <button type="submit" class="btn btn-primary">ADD</button>
+        </form>
+        <div style="max-height: 200px; overflow-y: auto;">
+            {% for ip in malicious_ips %}
+            <div class="iface-item" style="justify-content: space-between;">
+                <span>{{ ip.ip_address }}</span>
+                <form action="{{ url_for('views.delete_ip', ip_id=ip.id) }}" method="POST"><button style="background:none; border:none; color:var(--danger); cursor:pointer;">🗑️</button></form>
+            </div>
+            {% endfor %}
+        </div>
+        <button class="btn btn-ghost" onclick="closeModal('blacklistModal')" style="width:100%">CLOSE</button>
+    </div></div>
 
-    function closeAlertModal() {
-      document.getElementById("alertModal").style.display = "none";
-    }
+    <div id="statsModal" class="modal"><div class="modal-content"><h3>📊 Telemetry</h3><div id="cpu-stat">CPU: 12%</div><button class="btn btn-ghost" onclick="closeModal('statsModal')">CLOSE</button></div></div>
 
-    // Load live alerts every 2 seconds
-    setInterval(loadAlerts, 2000);
-    window.onload = loadAlerts;
+    <div id="rulesModal" class="modal"><div class="modal-content" style="width: 760px;">
+        <h3>Detection Rules</h3>
+        <form action="{{ url_for('views.add_rule') }}" method="POST" style="display: grid; grid-template-columns: 90px repeat(5, 1fr); gap: 8px; margin: 15px 0;">
+            <select name="protocol" required style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+            </select>
+            <input name="src_ip" placeholder="Src IP" style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="dst_ip" placeholder="Dst IP" style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="src_port" placeholder="Src Port" style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="dst_port" placeholder="Dst Port" style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="tcp_flags" placeholder="Flags (Sequence: FSRPAUEC" style="padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <input name="message" placeholder="Alert message" required style="grid-column: 1 / span 5; padding: 8px; background: #000; color: #fff; border: 1px solid var(--border);">
+            <button type="submit" class="btn btn-primary" style="justify-content: center;">ADD</button>
+        </form>
+        <div style="max-height: 260px; overflow-y: auto;">
+            {% for rule in detection_rules %}
+            <div class="iface-item" style="justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <div style="font-weight: 700;">{{ rule.protocol|upper }} {{ rule.src_ip }}:{{ rule.dst_ip }}:{{ rule.src_port }}:{{ rule.dst_port }}{% if rule.protocol == 'tcp' %}:{{ rule.tcp_flags }}{% endif %}</div>
+                    <div style="color: var(--text-dim); font-size: 0.75rem; margin-top: 4px;">{{ rule.message }}</div>
+                </div>
+                <form action="{{ url_for('views.delete_rule', rule_id=rule.id) }}" method="POST"><button style="background:none; border:none; color:var(--danger); cursor:pointer;">DELETE</button></form>
+            </div>
+            {% endfor %}
+        </div>
+        <button class="btn btn-ghost" onclick="closeModal('rulesModal')" style="width:100%">CLOSE</button>
+    </div></div>
 
-    // Live Packet Stream
-    const packetList = document.getElementById("packet-list");
-    const eventSource = new EventSource("/stream-packets");
-    eventSource.onmessage = function(event) {
-      const li = document.createElement("li");
-      li.textContent = event.data;
-      packetList.prepend(li);
-      if (packetList.children.length > 20) {
-        packetList.removeChild(packetList.lastChild);
-      }
-    };
-  </script>
+    <script>
+        function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
+        function clearAllAlerts() {
+            if(confirm("Wipe logs?")) {
+                fetch("/delete-all-alerts", { method: 'POST' })
+                .then(res => res.json())
+                .then(data => { if(data.status === 'success') location.reload(); });
+            }
+        }
+
+        const isCapturing = {{ 'true' if capturing else 'false' }};
+        let pCount = 0;
+
+        if (isCapturing) {
+            const eventSource = new EventSource("{{ url_for('views.stream_packets') }}");
+            eventSource.onmessage = function(e) {
+                const list = document.getElementById('packet-list');
+                const li = document.createElement('li');
+                li.className = 'packet-entry entering';
+                li.textContent = `> ${e.data}`;
+                list.prepend(li);
+                requestAnimationFrame(() => {
+                    li.classList.remove('entering');
+                });
+                if(list.children.length > 80) list.removeChild(list.lastChild);
+                pCount++;
+                document.getElementById('packet-counter').innerText = pCount;
+            };
+
+            setInterval(() => {
+                fetch("/get-alerts")
+                .then(res => res.json())
+                .then(data => {
+                    const list = document.getElementById('alert-list');
+                    document.getElementById('alert-counter').innerText = data.length;
+                    list.innerHTML = data.map(a => `<li>[THREAT] ${a.message}</li>`).join('');
+                });
+            }, 3000);
+        }
+    </script>
 </body>
 </html>

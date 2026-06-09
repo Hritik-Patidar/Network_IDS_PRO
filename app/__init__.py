@@ -12,7 +12,7 @@ def create_app():
 
     # Absolute path to the DB file
     base_dir = os.path.abspath(os.path.dirname(__file__))
-    db_path = os.path.join(base_dir, 'ids.db')
+    db_path = os.path.join(base_dir, 'data/ids.db')
 
     app.config['SECRET_KEY'] = 'your-secret-key'
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
@@ -23,7 +23,7 @@ def create_app():
     login_manager.login_view = 'views.login'
 
     # Import models after db is initialized
-    from .models import User
+    from app.data.models import User
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -33,10 +33,13 @@ def create_app():
     from .routes import views
     app.register_blueprint(views)
 
-    # Create DB and default admin user (if db doesn't exist)
-    if not os.path.exists(db_path):
-        with app.app_context():
-            db.create_all()
+    # Create missing DB tables, including tables added after the first run.
+    db_exists = os.path.exists(db_path)
+    with app.app_context():
+        db.create_all()
+
+        # Create default admin user only when the database file is new.
+        if not db_exists:
             print("[INFO] Database 'ids.db' created.")
 
             if not User.query.first():

@@ -1,5 +1,5 @@
 from app import db, create_app
-from app.models import User  # adjust if your User model is in another file
+from app.data.models import User  # adjust if your User model is in another file
 
 app = create_app()
 

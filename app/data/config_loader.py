@@ -1,8 +1,6 @@
-# config_loader.py
 
 import os
 
-# ✅ Default config values (used if config.txt doesn't exist)
 DEFAULT_CONFIG = {
     "MAC_FLOOD_WINDOW": 10,
     "MAC_FLOOD_THRESHOLD": 50,
@@ -21,7 +19,7 @@ DEFAULT_CONFIG = {
     "ICMP_ALERT_WINDOW": 7,
     "THRESHOLD": 30,
     "TIME_WINDOW": 6,
-    "MAX_PACKETS_PER_SECOND": 5,
+    "MAX_PACKETS_PER_SECOND": 100,
     "PACKET_RATE_THRESHOLD_DOS": 200,
     "RATE_TIME_WINDOW_DOS": 1
 }

@@ -1,17 +1,17 @@
-from flask import Blueprint, render_template, redirect, request, url_for, flash, jsonify
+from flask import Blueprint, render_template, redirect, request, url_for, flash, jsonify, Response
 from flask_login import login_user, login_required, logout_user
-from app.models import User, Alert, MaliciousIP
+from app.data.models import User, Alert, MaliciousIP, DetectionRule
 from werkzeug.security import check_password_hash
-import datetime
 import psutil
 import time
-from flask import Response
-from app.pack_cap import live_packet_queue  # Queue containing live packet summaries
-
+from app.detection_engine import live_packet_queue
 from app.capture_controller import start_capture, stop_capture
 from app import db
 
 views = Blueprint('views', __name__)
+
+# GLOBAL VARIABLE - isko functions ke andar use karne ke liye 'global' keyword chahiye
+is_capturing = False
 
 @views.route('/', methods=['GET', 'POST'])
 def login():
@@ -23,14 +23,69 @@ def login():
         flash("Invalid credentials")
     return render_template("login.html")
 
-@views.route('/dashboard', endpoint='dashboard')
+@views.route('/dashboard')
 @login_required
 def dashboard():
     interfaces = get_interfaces_with_ips()
-    alerts = Alert.query.order_by(Alert.timestamp.desc()).limit(10).all()
+    # Alerts limit hatayi hai taaki frontend handle kare
+    alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
     malicious_ips = MaliciousIP.query.all()
-    return render_template("dashboard.html", alerts=alerts, malicious_ips=malicious_ips, interfaces=interfaces)
+    detection_rules = DetectionRule.query.order_by(DetectionRule.id.desc()).all()
+    return render_template("dashboard.html", 
+                           capturing=is_capturing, 
+                           alerts=alerts, 
+                           malicious_ips=malicious_ips, 
+                           detection_rules=detection_rules,
+                           interfaces=interfaces)
 
+@views.route('/start-capture', methods=['POST'])
+@login_required
+def start_capture_route():
+    global is_capturing
+    selected_interfaces = request.form.getlist('interfaces')
+    if not selected_interfaces:
+        flash('Please select at least one interface.')
+        return redirect(url_for('views.dashboard'))
+
+    start_capture(selected_interfaces)
+    is_capturing = True  # Status updated globally
+    flash('NIDS Security Shield Activated.')
+    return redirect(url_for('views.dashboard'))
+
+@views.route('/stop-capture', methods=['POST'])
+@login_required
+def stop_capture_route():
+    global is_capturing
+    stop_capture()
+    is_capturing = False
+    flash('NIDS Security Shield Deactivated.')
+    return redirect(url_for('views.dashboard'))
+
+@views.route('/stream-packets')
+@login_required
+def stream_packets():
+    def generate():
+        while True:
+            # Agar queue empty nahi hai toh message bh
+            if not live_packet_queue.empty():
+                message = live_packet_queue.get()
+                yield f"data: {message}\n\n"
+            else:
+                time.sleep(0.5) # CPU usage kam rakhne ke liye
+    return Response(generate(), mimetype='text/event-stream')
+
+@views.route('/delete-all-alerts', methods=['POST'])
+@login_required
+def delete_all_alerts():
+    try:
+        db.session.query(Alert).delete()
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Logs wiped."})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Baki Add-IP aur Delete-IP routes pehle jaise hi rahenge
 @views.route('/add-ip', methods=['POST'])
 @login_required
 def add_ip():
@@ -40,77 +95,51 @@ def add_ip():
     db.session.commit()
     return redirect(url_for('views.dashboard'))
 
-@views.route('/logout')
-def logout():
-    logout_user()
-    return redirect(url_for('views.login'))
+def normalize_rule_field(value):
+    value = (value or "").strip()
+    return value if value else "*"
 
-@views.route('/simulate-alert')
-def simulate_alert():
-    alert = Alert(timestamp=str(datetime.datetime.now()), message="Possible intrusion detected!")
-    db.session.add(alert)
+def refresh_detection_rules():
+    from app.detection_engine import reload_rules_from_db
+    reload_rules_from_db()
+
+@views.route('/add-rule', methods=['POST'])
+@login_required
+def add_rule():
+    protocol = normalize_rule_field(request.form.get('protocol')).lower()
+    message = (request.form.get('message') or "").strip()
+
+    if protocol not in ("tcp", "udp"):
+        flash("Please select TCP or UDP for the rule.")
+        return redirect(url_for('views.dashboard'))
+
+    if not message:
+        flash("Rule message is required.")
+        return redirect(url_for('views.dashboard'))
+
+    detection_rule = DetectionRule(
+        protocol=protocol,
+        src_ip=normalize_rule_field(request.form.get('src_ip')),
+        dst_ip=normalize_rule_field(request.form.get('dst_ip')),
+        src_port=normalize_rule_field(request.form.get('src_port')),
+        dst_port=normalize_rule_field(request.form.get('dst_port')),
+        tcp_flags=normalize_rule_field(request.form.get('tcp_flags')) if protocol == "tcp" else "*",
+        message=message
+    )
+    db.session.add(detection_rule)
     db.session.commit()
+    refresh_detection_rules()
     return redirect(url_for('views.dashboard'))
 
-@views.route('/start-capture', methods=['POST'])
-def start_capture_route():
-    selected_interfaces = request.form.getlist('interfaces')
-    if not selected_interfaces:
-        flash('Please select at least one interface.')
-        return redirect(url_for('dashboard'))
-
-    start_capture(selected_interfaces)
-    flash('Packet capturing started.')
+@views.route('/delete-rule/<int:rule_id>', methods=['POST'])
+@login_required
+def delete_rule(rule_id):
+    detection_rule = DetectionRule.query.get(rule_id)
+    if detection_rule:
+        db.session.delete(detection_rule)
+        db.session.commit()
+        refresh_detection_rules()
     return redirect(url_for('views.dashboard'))
-
-@views.route('/stop-capture', methods=['POST'])
-def stop_capture_route():
-    stop_capture()
-    flash('Packet capturing stopped.')
-    return redirect(url_for('views.dashboard'))
-
-def get_interfaces_with_ips():
-    interfaces = []
-    for iface_name, iface_addrs in psutil.net_if_addrs().items():
-        ip = "No IP"
-        for addr in iface_addrs:
-            if addr.family.name == 'AF_INET':
-                ip = addr.address
-        interfaces.append({
-            'name': iface_name,
-            'label': f"{iface_name} ({ip})"
-        })
-    return interfaces
-
-@views.route('/get-alerts')
-@login_required
-def get_alerts():
-    alerts = Alert.query.order_by(Alert.timestamp.desc()).limit(10).all()
-    alert_data = [{'timestamp': alert.timestamp, 'message': alert.message} for alert in alerts]
-    return jsonify(alert_data)
-
-@views.route('/get-all-alerts')
-@login_required
-def get_all_alerts():
-    alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
-    alert_data = [{'timestamp': alert.timestamp, 'message': alert.message} for alert in alerts]
-    return jsonify(alert_data)
-
-
-
-@views.route('/stream-packets')
-@login_required
-def stream_packets():
-    def generate():
-        while True:
-            try:
-                message = live_packet_queue.get(timeout=5)
-                yield f"data: {message}\n\n"
-            except:
-                time.sleep(1)
-
-    return Response(generate(), mimetype='text/event-stream')
-
 
 @views.route('/delete-ip/<int:ip_id>', methods=['POST'])
 @login_required
@@ -119,17 +148,26 @@ def delete_ip(ip_id):
     if ip_entry:
         db.session.delete(ip_entry)
         db.session.commit()
-        flash('IP deleted successfully.')
-    else:
-        flash('IP not found.')
     return redirect(url_for('views.dashboard'))
 
-@views.route('/delete-all-alerts', methods=['POST'])
-def delete_all_alerts():
-    try:
-        Alert.query.delete()  # DELETE FROM alerts
-        db.session.commit()
-        return jsonify({"status": "success", "message": "All alerts deleted."})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"status": "error", "message": str(e)}), 500
+@views.route('/logout')
+def logout():
+    logout_user()
+    return redirect(url_for('views.login'))
+
+def get_interfaces_with_ips():
+    interfaces = []
+    for iface_name, iface_addrs in psutil.net_if_addrs().items():
+        ip = "No IP"
+        for addr in iface_addrs:
+            if addr.family.name == 'AF_INET':
+                ip = addr.address
+        interfaces.append({'name': iface_name, 'label': f"{iface_name} ({ip})"})
+    return interfaces
+
+@views.route('/get-alerts') # Iske upar @login_required bhi ho sakta hai
+@login_required
+def get_alerts(): # Function name should be exactly this
+    alerts = Alert.query.order_by(Alert.timestamp.desc()).limit(10).all()
+    alert_data = [{'timestamp': alert.timestamp, 'message': alert.message} for alert in alerts]
+    return jsonify(alert_data)
