@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, redirect, request, url_for, flash, jsonify, Response
 from flask_login import login_user, login_required, logout_user
-from app.data.models import User, Alert, MaliciousIP
+from app.data.models import User, Alert, MaliciousIP, DetectionRule
 from werkzeug.security import check_password_hash
 import psutil
 import time
@@ -30,10 +30,12 @@ def dashboard():
     # Alerts limit hatayi hai taaki frontend handle kare
     alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
     malicious_ips = MaliciousIP.query.all()
+    detection_rules = DetectionRule.query.order_by(DetectionRule.id.desc()).all()
     return render_template("dashboard.html", 
                            capturing=is_capturing, 
                            alerts=alerts, 
                            malicious_ips=malicious_ips, 
+                           detection_rules=detection_rules,
                            interfaces=interfaces)
 
 @views.route('/start-capture', methods=['POST'])
@@ -91,6 +93,52 @@ def add_ip():
     desc = request.form['desc']
     db.session.add(MaliciousIP(ip_address=ip, description=desc))
     db.session.commit()
+    return redirect(url_for('views.dashboard'))
+
+def normalize_rule_field(value):
+    value = (value or "").strip()
+    return value if value else "*"
+
+def refresh_detection_rules():
+    from app.detection_engine import reload_rules_from_db
+    reload_rules_from_db()
+
+@views.route('/add-rule', methods=['POST'])
+@login_required
+def add_rule():
+    protocol = normalize_rule_field(request.form.get('protocol')).lower()
+    message = (request.form.get('message') or "").strip()
+
+    if protocol not in ("tcp", "udp"):
+        flash("Please select TCP or UDP for the rule.")
+        return redirect(url_for('views.dashboard'))
+
+    if not message:
+        flash("Rule message is required.")
+        return redirect(url_for('views.dashboard'))
+
+    detection_rule = DetectionRule(
+        protocol=protocol,
+        src_ip=normalize_rule_field(request.form.get('src_ip')),
+        dst_ip=normalize_rule_field(request.form.get('dst_ip')),
+        src_port=normalize_rule_field(request.form.get('src_port')),
+        dst_port=normalize_rule_field(request.form.get('dst_port')),
+        tcp_flags=normalize_rule_field(request.form.get('tcp_flags')) if protocol == "tcp" else "*",
+        message=message
+    )
+    db.session.add(detection_rule)
+    db.session.commit()
+    refresh_detection_rules()
+    return redirect(url_for('views.dashboard'))
+
+@views.route('/delete-rule/<int:rule_id>', methods=['POST'])
+@login_required
+def delete_rule(rule_id):
+    detection_rule = DetectionRule.query.get(rule_id)
+    if detection_rule:
+        db.session.delete(detection_rule)
+        db.session.commit()
+        refresh_detection_rules()
     return redirect(url_for('views.dashboard'))
 
 @views.route('/delete-ip/<int:ip_id>', methods=['POST'])

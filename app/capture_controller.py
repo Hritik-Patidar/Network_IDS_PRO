@@ -19,7 +19,8 @@ def start_capture(user_selected_labels):
     else:
         print("File not found")
 
-    from app.detection_engine import process_packet
+    from app.detection_engine import process_packet, reload_rules_from_db
+    reload_rules_from_db()
     # Step 1: Map user-friendly labels to actual interface names
     def convert_labels_to_interfaces(labels):
         system_interfaces = psutil.net_if_addrs()

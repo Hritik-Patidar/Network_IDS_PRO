@@ -33,10 +33,13 @@ def create_app():
     from .routes import views
     app.register_blueprint(views)
 
-    # Create DB and default admin user (if db doesn't exist)
-    if not os.path.exists(db_path):
-        with app.app_context():
-            db.create_all()
+    # Create missing DB tables, including tables added after the first run.
+    db_exists = os.path.exists(db_path)
+    with app.app_context():
+        db.create_all()
+
+        # Create default admin user only when the database file is new.
+        if not db_exists:
             print("[INFO] Database 'ids.db' created.")
 
             if not User.query.first():

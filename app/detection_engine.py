@@ -23,9 +23,45 @@ check_duplicate=AlertDeduplicator(30) #time in second for duplicate alert expire
 
 # Load config from file
 config = load_config()
-rule={"tcp":{"*:*:*:*:A": "Alert ack  packet from tcp",
-             "20.42.73.27:*:*:*:*":"specfic ip address alert 20.42.73.27"},
-      "udp":{"*:*:53:*":"alert udp 53 port packet "}}
+rule = {"tcp": {}, "udp": {}}
+
+def build_rule_key(detection_rule):
+    fields = [
+        detection_rule.src_ip,
+        detection_rule.dst_ip,
+        detection_rule.src_port,
+        detection_rule.dst_port
+    ]
+    if detection_rule.protocol == "tcp":
+        fields.append(detection_rule.tcp_flags)
+    return ":".join(fields)
+
+def reload_rules_from_db():
+    global rule
+    loaded_rules = {"tcp": {}, "udp": {}}
+    try:
+        from app import create_app
+        from app.data.models import DetectionRule
+
+        flask_app = create_app()
+        with flask_app.app_context():
+            detection_rules = DetectionRule.query.filter_by(enabled=True).all()
+            for detection_rule in detection_rules:
+                protocol = detection_rule.protocol.lower()
+                if protocol in loaded_rules:
+                    loaded_rules[protocol][build_rule_key(detection_rule)] = detection_rule.message
+        rule = loaded_rules
+    except Exception as e:
+        print(f"[WARNING] Unable to load detection rules from DB: {e}")
+    return rule
+
+def handle_rule_match(protocol, rule_hash, message):
+    alert_message = f"[ALERT] Rule matched [{protocol}] {rule_hash}: {message}"
+    if check_duplicate.process(f"Rule matched {protocol} {rule_hash}"):
+        stats.log_alert("Rule Based")
+        save_alert_to_db(alert_message)
+    print(Fore.RED + alert_message + Style.RESET_ALL)
+
 # MAC Flooding
 mac_seen = defaultdict(lambda: deque())  # src_ip -> deque of (mac, timestamp)
 
@@ -77,15 +113,16 @@ def process_packet(packet):
         if attribute.get("protocol")=="tcp":
             for hash in hashs:
                 if rule.get("tcp", {}).get(hash):
-                    print(f"[rule matched : tcp ]{hash}")
-                    print(rule.get("tcp", {}).get(hash))
+                    # print(f"[rule matched : tcp ]{hash}")
+                    handle_rule_match("tcp", hash, rule.get("tcp", {}).get(hash)+f"Source:{attribute.get('src_ip')},Destination:{attribute.get('dest_ip')}")
                     break
         elif attribute.get("protocol") == "udp":
             for hash in hashs:
                 if rule.get("udp", {}).get(hash):
-                    print(f"[rule matched : udp ]{hash}")
-                    print(rule.get("udp", {}).get(hash))
+                    # print(f"[rule matched : udp ]{hash}")
+                    handle_rule_match("udp", hash, rule.get("udp", {}).get(hash)+f"Source:{attribute.get('src_ip')},Destination:{attribute.get('dest_ip')}")
                     break
+
         # print(attribute.get("hash_strings"))
     global start_time, last_sent_time, packet_count
     # print(malicious_ips)
